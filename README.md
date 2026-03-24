@@ -2,6 +2,8 @@
 
 A ridicolous fork of [@martinwoodward's 3dbreakout](https://x.com/martinwoodward/status/2035922957177180353). A 3D pong game themed after the GitHub contribution graph, with webcam eyebrow-tracking controls 🙄 Made with lulz and GitHub Copilot CLI.
 
+![](demo.webp)
+
 ## Features
 
 - **Eyebrow-Tracked Paddles** — Raise your eyebrows to move your paddle up; relax to drift down
