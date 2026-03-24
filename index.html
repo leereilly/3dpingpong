@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GitHub Breakout 3D</title>
+  <title>GitHub Pong 3D</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
       background: #0d1117;
       overflow: hidden;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
       color: #e6edf3;
       user-select: none;
       touch-action: manipulation;
@@ -27,8 +27,8 @@
       position: fixed;
       bottom: 16px;
       right: 16px;
-      width: 180px;
-      height: 135px;
+      width: 220px;
+      height: 165px;
       border-radius: 12px;
       overflow: hidden;
       border: 2px solid #30363d;
@@ -56,16 +56,6 @@
       color: #8b949e;
     }
     #webcamLabel.tracking { color: #3fb950; }
-    .webcam-guide {
-      position: absolute;
-      top: 0;
-      width: 1px;
-      height: 100%;
-      border-left: 1px dashed rgba(63,185,80,.5);
-      pointer-events: none;
-    }
-    .webcam-guide.left  { left: 33.3%; }
-    .webcam-guide.right { left: 66.6%; }
 
     /* ---- HUD ---- */
     #hud {
@@ -75,24 +65,35 @@
       width: 100%;
       padding: 20px 28px;
       display: flex;
-      justify-content: space-between;
+      justify-content: center;
       align-items: flex-start;
       pointer-events: none;
       z-index: 10;
     }
     #scoreDisplay {
-      font-size: 22px;
-      font-weight: 600;
+      font-size: 32px;
+      font-weight: 700;
       color: #e6edf3;
       text-shadow: 0 2px 8px rgba(0,0,0,.6);
+      letter-spacing: 2px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
     }
-    #scoreDisplay span { color: #3fb950; }
+    .score-p1 { color: #58a6ff; }
+    .score-p2 { color: #bc8cff; }
+    .score-sep { color: #30363d; font-weight: 400; }
 
-    #livesDisplay {
-      font-size: 22px;
-      font-weight: 600;
-      text-shadow: 0 2px 8px rgba(0,0,0,.6);
+    #modeIndicator {
+      position: fixed;
+      top: 20px;
+      right: 28px;
+      font-size: 13px;
+      color: #8b949e;
+      pointer-events: none;
+      z-index: 10;
     }
+    #modeIndicator.two-player { color: #3fb950; }
 
     /* ---- Start overlay ---- */
     #overlay {
@@ -129,20 +130,14 @@
       margin-bottom: 32px;
     }
 
-    .commit-row {
-      display: flex;
-      gap: 4px;
-      margin-bottom: 4px;
-    }
-    .commit-cell {
-      width: 14px;
-      height: 14px;
-      border-radius: 3px;
-      background: #161b22;
+    #controlHint {
+      font-size: 14px;
+      color: #58a6ff;
+      margin-bottom: 8px;
     }
 
     #startHint {
-      margin-top: 32px;
+      margin-top: 24px;
       font-size: 16px;
       color: #8b949e;
       animation: pulse 2s ease-in-out infinite;
@@ -195,22 +190,30 @@
       font-weight: 800;
       margin-bottom: 12px;
     }
-    #gameOverTitle.win {
-      background: linear-gradient(135deg, #9be9a8, #216e39);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+    #gameOverTitle.p1-win {
+      color: #58a6ff;
+    }
+    #gameOverTitle.p2-win {
+      color: #bc8cff;
     }
     #finalScore {
       font-size: 24px;
       color: #8b949e;
       margin-bottom: 24px;
     }
-    #finalScore span { color: #3fb950; font-weight: 700; }
     #restartHint {
       font-size: 16px;
       color: #8b949e;
       animation: pulse 2s ease-in-out infinite;
+    }
+
+    /* ---- Score flash ---- */
+    .score-flash {
+      animation: scoreFlash 0.6s ease-out;
+    }
+    @keyframes scoreFlash {
+      0% { transform: scale(1.5); }
+      100% { transform: scale(1); }
     }
 
     /* ---- Loading ---- */
@@ -229,43 +232,38 @@
 
   <canvas id="gameCanvas"></canvas>
 
-  <!-- Webcam -->
   <div id="webcamContainer">
     <video id="webcam" autoplay playsinline muted></video>
-    <div class="webcam-guide left"></div>
-    <div class="webcam-guide right"></div>
     <div id="webcamLabel">Initializing camera…</div>
   </div>
 
-  <!-- HUD -->
   <div id="hud">
-    <div id="scoreDisplay">Score: <span>0</span></div>
-    <div id="livesDisplay">❤️ ❤️ ❤️</div>
+    <div id="scoreDisplay">
+      <span class="score-p1" id="p1Score">0</span>
+      <span class="score-sep">—</span>
+      <span class="score-p2" id="p2Score">0</span>
+    </div>
   </div>
+  <div id="modeIndicator">Waiting for camera…</div>
 
-  <!-- Start screen -->
   <div id="overlay">
-    <div id="title">GitHub Breakout</div>
-    <div id="subtitle">3D · Face-Tracked · Commit-Graph Edition</div>
-    <div id="commitGraph"></div>
+    <div id="title">GitHub Pong</div>
+    <div id="subtitle">3D · Eyebrow-Tracked · Contribution Edition</div>
+    <div id="controlHint">📷 Raise your eyebrows to move your paddle up</div>
     <div id="startHint">Tap or press <kbd>SPACE</kbd> to start</div>
-    <div id="cameraHint">📷 Allow camera access for face-tracking controls</div>
+    <div id="cameraHint">2 faces = 2 players · 1 face = vs AI</div>
   </div>
 
-  <!-- Game over screen -->
   <div id="gameOver">
     <div id="gameOverTitle">Game Over</div>
-    <div id="finalScore">Final Score: <span>0</span></div>
+    <div id="finalScore"></div>
     <div id="restartHint">Tap or press <kbd>SPACE</kbd> to play again</div>
   </div>
 
-  <!-- Loading indicator -->
   <div id="loading">Loading face-tracking model…</div>
 
-  <!-- CDN Dependencies -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
-  <!-- Game (module for dynamic MediaPipe import) -->
   <script type="module" src="game.js"></script>
 
 </body>

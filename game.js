@@ -1,73 +1,106 @@
 // ═══════════════════════════════════════════════════════════════
-// GitHub Breakout 3D — Full Game Engine
+// GitHub Pong 3D — Eyebrow-Controlled 2-Player Pong
 // ═══════════════════════════════════════════════════════════════
 
 (function () {
   'use strict';
 
   // ─── Constants ───────────────────────────────────────────────
-  const FIELD_W = 16;
-  const FIELD_H = 22;
+  const FIELD_W = 20;
+  const FIELD_H = 14;
   const WALL_THICKNESS = 0.4;
 
-  const GRID_COLS = 20;
-  const GRID_ROWS = 7;
-  const BLOCK_SIZE = 0.58;
-  const BLOCK_DEPTH = 0.28;
-  const BLOCK_SPACING = 0.70;
-
-  const PADDLE_W = 2.8;
-  const PADDLE_H = 0.35;
+  // Paddles (tall, thin, on left/right edges)
+  const PADDLE_W = 0.55;
+  const PADDLE_H = 2.8;
   const PADDLE_D = 0.55;
-  const PADDLE_Y = -FIELD_H / 2 + 1.5;
+  const PADDLE_SPEED = 9;
+  const PADDLE_X_OFFSET = 1.2;
 
-  const BALL_RADIUS = 0.22;
-  const BALL_SPEED_INITIAL = 10;
-  const BALL_SPEED_MAX = 16;
-  const BALL_SPEED_INCREMENT = 0.3;
+  // Ball (green contribution square)
+  const BALL_SIZE = 0.45;
+  const BALL_DEPTH = 0.22;
+  const BALL_SPEED_INITIAL = 9;
+  const BALL_SPEED_MAX = 18;
+  const BALL_SPEED_INCREMENT = 0.2;
 
-  const MAX_LIVES = 3;
+  // Scoring
+  const WIN_SCORE = 5;
+  const SCORE_PAUSE = 1.2;
 
+  // Colors
   const GITHUB_BG = 0x0d1117;
-  const GITHUB_EMPTY = 0x161b22;
-  const GITHUB_GREENS = [
-    null,
-    { hex: 0x9be9a8, css: '#9be9a8', points: 10 },
-    { hex: 0x40c463, css: '#40c463', points: 20 },
-    { hex: 0x30a14e, css: '#30a14e', points: 30 },
-    { hex: 0x216e39, css: '#216e39', points: 50 },
-  ];
+  const GITHUB_GREENS = [0x9be9a8, 0x40c463, 0x30a14e, 0x216e39];
+  const P1_COLOR = 0x58a6ff;
+  const P2_COLOR = 0xbc8cff;
+  const BALL_COLOR = 0x40c463;
 
-  const PARTICLE_COUNT = 32;
-  const SPARKLE_COUNT = 18;
-  const PARTICLE_LIFE = 1.0;
-  const SPARKLE_LIFE = 0.6;
+  // Camera
+  const CAM_BASE = new THREE.Vector3(0, -2, 24);
+  const CAM_LOOKAT = new THREE.Vector3(0, 0, 0);
+  const PARALLAX_X = 3.0;
+  const PARALLAX_Y = 2.0;
 
-  // Camera base position
-  const CAM_BASE = new THREE.Vector3(0, -2, 22);
-  const CAM_LOOKAT_BASE = new THREE.Vector3(0, 1, 0);
-  const PARALLAX_STRENGTH_X = 4.0;
-  const PARALLAX_STRENGTH_Y = 2.5;
+  // Particles
+  const PARTICLE_COUNT = 24;
+  const SPARKLE_COUNT = 14;
+  const PARTICLE_LIFE = 0.8;
+  const SPARKLE_LIFE = 0.5;
+
+  // AI
+  const AI_SPEED = 7.5;
+  const AI_DEAD_ZONE = 0.4;
+
+  // Eyebrow detection
+  const EYEBROW_ADAPT_RATE = 0.005;
+  const EYEBROW_RAISE_THRESHOLD = 0.012;
+  const CALIBRATION_FRAMES = 60;
+
+  // Face tracking landmarks
+  const LEFT_BROW = [105, 66, 107, 70, 63];
+  const RIGHT_BROW = [334, 296, 336, 300, 293];
+  const LEFT_EYE_TOP = 159;
+  const RIGHT_EYE_TOP = 386;
+  const FOREHEAD = 10;
+  const CHIN = 152;
 
   // ─── State ───────────────────────────────────────────────────
-  let gameState = 'WAITING'; // WAITING | PLAYING | GAME_OVER | WIN
-  let score = 0;
-  let lives = MAX_LIVES;
+  let gameState = 'WAITING'; // WAITING | PLAYING | SCORED | GAME_OVER
+  let p1Score = 0;
+  let p2Score = 0;
   let ballSpeed = BALL_SPEED_INITIAL;
-  let blocksAlive = 0;
+  let rallyCount = 0;
   let screenShake = 0;
+  let scorePauseTimer = 0;
+  let serveDirection = 1;
 
   // Face tracking state
-  let faceDetected = false;
-  let rawFaceX = 0;  // -1 … 1
+  let faceLandmarker = null;
+  let lastDetectTime = 0;
+  let numFacesDetected = 0;
+
+  // Eyebrow state per player
+  let p1EyebrowUp = false;
+  let p2EyebrowUp = false;
+  let p1EyebrowRatio = 0;
+  let p2EyebrowRatio = 0;
+  let p1Baseline = 0;
+  let p2Baseline = 0;
+  let p1CalibFrames = 0;
+  let p2CalibFrames = 0;
+  let p1BaselineSum = 0;
+  let p2BaselineSum = 0;
+
+  // Camera face tracking for parallax
+  let rawFaceX = 0;
   let rawFaceY = 0;
   let smoothFaceX = 0;
   let smoothFaceY = 0;
-  const FACE_SMOOTH = 0.12; // lower = smoother
+  const FACE_SMOOTH = 0.1;
 
-  // Fallback mouse control
-  let mouseX = 0;
-  let useMouseFallback = false;
+  // Keyboard fallback
+  let keysDown = {};
+  let useKeyboardFallback = false;
 
   // ─── DOM ─────────────────────────────────────────────────────
   const canvas = document.getElementById('gameCanvas');
@@ -77,20 +110,20 @@
   const overlay = document.getElementById('overlay');
   const gameOverEl = document.getElementById('gameOver');
   const gameOverTitle = document.getElementById('gameOverTitle');
-  const scoreSpan = document.querySelector('#scoreDisplay span');
-  const finalScoreSpan = document.querySelector('#finalScore span');
-  const livesDisplay = document.getElementById('livesDisplay');
+  const p1ScoreEl = document.getElementById('p1Score');
+  const p2ScoreEl = document.getElementById('p2Score');
+  const finalScoreEl = document.getElementById('finalScore');
+  const modeIndicator = document.getElementById('modeIndicator');
   const loadingEl = document.getElementById('loading');
-  const commitGraphEl = document.getElementById('commitGraph');
 
   // ─── Three.js Setup ─────────────────────────────────────────
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(GITHUB_BG);
-  scene.fog = new THREE.Fog(GITHUB_BG, 28, 45);
+  scene.fog = new THREE.Fog(GITHUB_BG, 30, 50);
 
-  const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
+  const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
   camera.position.copy(CAM_BASE);
-  camera.lookAt(CAM_LOOKAT_BASE);
+  camera.lookAt(CAM_LOOKAT);
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -106,23 +139,23 @@
   mainLight.position.set(5, 15, 20);
   mainLight.castShadow = true;
   mainLight.shadow.mapSize.set(1024, 1024);
-  mainLight.shadow.camera.left = -12;
-  mainLight.shadow.camera.right = 12;
-  mainLight.shadow.camera.top = 15;
-  mainLight.shadow.camera.bottom = -15;
+  mainLight.shadow.camera.left = -14;
+  mainLight.shadow.camera.right = 14;
+  mainLight.shadow.camera.top = 10;
+  mainLight.shadow.camera.bottom = -10;
   scene.add(mainLight);
 
   const rimLight = new THREE.DirectionalLight(0x40c463, 0.3);
   rimLight.position.set(-8, 5, -10);
   scene.add(rimLight);
 
-  const bottomLight = new THREE.PointLight(0x58a6ff, 0.4, 30);
-  bottomLight.position.set(0, PADDLE_Y - 2, 5);
-  scene.add(bottomLight);
+  const centerLight = new THREE.PointLight(0x40c463, 0.3, 20);
+  centerLight.position.set(0, 0, 5);
+  scene.add(centerLight);
 
   // ─── Playing Field ──────────────────────────────────────────
   // Floor
-  const floorGeo = new THREE.PlaneGeometry(FIELD_W + 4, FIELD_H + 8);
+  const floorGeo = new THREE.PlaneGeometry(FIELD_W + 6, FIELD_H + 6);
   const floorMat = new THREE.MeshStandardMaterial({
     color: 0x0d1117,
     roughness: 0.9,
@@ -133,13 +166,13 @@
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // Subtle grid on floor
+  // Grid on floor
   const gridHelper = new THREE.GridHelper(30, 30, 0x161b22, 0x161b22);
   gridHelper.rotation.x = Math.PI / 2;
   gridHelper.position.z = -0.45;
   scene.add(gridHelper);
 
-  // Walls
+  // Walls (top and bottom only — ball exits left/right for scoring)
   const wallMat = new THREE.MeshStandardMaterial({
     color: 0x21262d,
     roughness: 0.7,
@@ -156,179 +189,117 @@
     return mesh;
   }
 
-  // Left, right, top walls
-  createWall(WALL_THICKNESS, FIELD_H + 2, 1.0, -FIELD_W / 2 - WALL_THICKNESS / 2, 0, 0);
-  createWall(WALL_THICKNESS, FIELD_H + 2, 1.0, FIELD_W / 2 + WALL_THICKNESS / 2, 0, 0);
-  createWall(FIELD_W + WALL_THICKNESS * 2 + 0.1, WALL_THICKNESS, 1.0, 0, FIELD_H / 2 + WALL_THICKNESS / 2, 0);
+  // Top wall
+  createWall(FIELD_W + 2, WALL_THICKNESS, 0.8, 0, FIELD_H / 2 + WALL_THICKNESS / 2, 0);
+  // Bottom wall
+  createWall(FIELD_W + 2, WALL_THICKNESS, 0.8, 0, -FIELD_H / 2 - WALL_THICKNESS / 2, 0);
 
-  // ─── Blocks (Commit Graph) ─────────────────────────────────
-  const blocks = [];
-  const blockGeo = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_DEPTH);
-
-  // Generate commit-graph-like data
-  function generateCommitData() {
-    const data = [];
-    for (let row = 0; row < GRID_ROWS; row++) {
-      data[row] = [];
-      for (let col = 0; col < GRID_COLS; col++) {
-        // Weekday bias: rows 1-5 (Mon-Fri) have more activity
-        const isWeekday = row >= 1 && row <= 5;
-        const activityBias = isWeekday ? 0.7 : 0.35;
-
-        // Create "streaks" — some columns (weeks) are more active
-        const weekActivity = Math.sin(col * 0.5 + 2) * 0.3 + 0.5 +
-          Math.sin(col * 1.3) * 0.2;
-
-        const chance = activityBias * weekActivity;
-        if (Math.random() < chance) {
-          // Weighted level distribution: more light, fewer dark
-          const r = Math.random();
-          if (r < 0.35) data[row][col] = 1;
-          else if (r < 0.60) data[row][col] = 2;
-          else if (r < 0.82) data[row][col] = 3;
-          else data[row][col] = 4;
-        } else {
-          data[row][col] = 0;
-        }
-      }
-    }
-    return data;
+  // Center line (dashed)
+  const centerLineMat = new THREE.MeshBasicMaterial({
+    color: 0x21262d,
+    transparent: true,
+    opacity: 0.6,
+  });
+  const dashCount = 20;
+  const dashHeight = FIELD_H / dashCount * 0.5;
+  const dashGap = FIELD_H / dashCount;
+  for (let i = 0; i < dashCount; i++) {
+    const geo = new THREE.BoxGeometry(0.08, dashHeight, 0.08);
+    const mesh = new THREE.Mesh(geo, centerLineMat);
+    const y = -FIELD_H / 2 + dashGap * 0.5 + i * dashGap;
+    mesh.position.set(0, y, -0.2);
+    scene.add(mesh);
   }
 
-  let commitData;
+  // ─── Paddles ────────────────────────────────────────────────
+  const p1PaddleX = -FIELD_W / 2 + PADDLE_X_OFFSET;
+  const p2PaddleX = FIELD_W / 2 - PADDLE_X_OFFSET;
 
-  function buildBlocks() {
-    // Clear existing blocks
-    blocks.forEach(b => { if (b.mesh) scene.remove(b.mesh); });
-    blocks.length = 0;
-    blocksAlive = 0;
-
-    commitData = generateCommitData();
-
-    const gridW = GRID_COLS * BLOCK_SPACING;
-    const gridH = GRID_ROWS * BLOCK_SPACING;
-    const startX = -gridW / 2 + BLOCK_SPACING / 2;
-    const startY = FIELD_H / 2 - 2.5;
-
-    for (let row = 0; row < GRID_ROWS; row++) {
-      for (let col = 0; col < GRID_COLS; col++) {
-        const level = commitData[row][col];
-        if (level === 0) continue;
-
-        const color = GITHUB_GREENS[level];
-        const mat = new THREE.MeshStandardMaterial({
-          color: color.hex,
-          roughness: 0.4,
-          metalness: 0.2,
-          emissive: color.hex,
-          emissiveIntensity: 0.15,
-        });
-
-        const mesh = new THREE.Mesh(blockGeo, mat);
-        const x = startX + col * BLOCK_SPACING;
-        const y = startY - row * BLOCK_SPACING;
-        mesh.position.set(x, y, 0);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        scene.add(mesh);
-
-        blocks.push({
-          mesh,
-          alive: true,
-          level,
-          color,
-          x, y,
-          row, col,
-        });
-        blocksAlive++;
-      }
-    }
-  }
-
-  buildBlocks();
-
-  // Build decorative commit graph on start screen
-  function buildUICommitGraph() {
-    const data = commitData || generateCommitData();
-    commitGraphEl.innerHTML = '';
-    const colors = [null, '#9be9a8', '#40c463', '#30a14e', '#216e39'];
-    for (let row = 0; row < GRID_ROWS; row++) {
-      const rowEl = document.createElement('div');
-      rowEl.className = 'commit-row';
-      for (let col = 0; col < GRID_COLS; col++) {
-        const cell = document.createElement('div');
-        cell.className = 'commit-cell';
-        if (data[row] && data[row][col] > 0) {
-          cell.style.background = colors[data[row][col]];
-        }
-        rowEl.appendChild(cell);
-      }
-      commitGraphEl.appendChild(rowEl);
-    }
-  }
-  buildUICommitGraph();
-
-  // ─── Paddle ─────────────────────────────────────────────────
   const paddleGeo = new THREE.BoxGeometry(PADDLE_W, PADDLE_H, PADDLE_D);
-  const paddleMat = new THREE.MeshStandardMaterial({
+
+  const p1PaddleMat = new THREE.MeshStandardMaterial({
     color: 0xe6edf3,
     roughness: 0.3,
     metalness: 0.5,
-    emissive: 0x58a6ff,
-    emissiveIntensity: 0.2,
+    emissive: P1_COLOR,
+    emissiveIntensity: 0.25,
   });
-  const paddle = new THREE.Mesh(paddleGeo, paddleMat);
-  paddle.position.set(0, PADDLE_Y, 0);
-  paddle.castShadow = true;
-  scene.add(paddle);
+  const p1Paddle = new THREE.Mesh(paddleGeo, p1PaddleMat);
+  p1Paddle.position.set(p1PaddleX, 0, 0);
+  p1Paddle.castShadow = true;
+  scene.add(p1Paddle);
 
-  // Paddle glow
-  const paddleGlowGeo = new THREE.PlaneGeometry(PADDLE_W + 1.5, 0.6);
-  const paddleGlowMat = new THREE.MeshBasicMaterial({
-    color: 0x58a6ff,
+  const p2PaddleMat = new THREE.MeshStandardMaterial({
+    color: 0xe6edf3,
+    roughness: 0.3,
+    metalness: 0.5,
+    emissive: P2_COLOR,
+    emissiveIntensity: 0.25,
+  });
+  const p2Paddle = new THREE.Mesh(paddleGeo, p2PaddleMat);
+  p2Paddle.position.set(p2PaddleX, 0, 0);
+  p2Paddle.castShadow = true;
+  scene.add(p2Paddle);
+
+  // Paddle glows
+  const p1GlowGeo = new THREE.PlaneGeometry(0.8, PADDLE_H + 1.2);
+  const p1GlowMat = new THREE.MeshBasicMaterial({
+    color: P1_COLOR,
     transparent: true,
-    opacity: 0.12,
+    opacity: 0.1,
     side: THREE.DoubleSide,
   });
-  const paddleGlow = new THREE.Mesh(paddleGlowGeo, paddleGlowMat);
-  paddleGlow.position.set(0, PADDLE_Y - 0.25, -0.2);
-  scene.add(paddleGlow);
+  const p1Glow = new THREE.Mesh(p1GlowGeo, p1GlowMat);
+  p1Glow.position.set(p1PaddleX - 0.3, 0, -0.2);
+  scene.add(p1Glow);
 
-  // ─── Ball ───────────────────────────────────────────────────
-  const ballGeo = new THREE.SphereGeometry(BALL_RADIUS, 24, 24);
+  const p2GlowGeo = new THREE.PlaneGeometry(0.8, PADDLE_H + 1.2);
+  const p2GlowMat = new THREE.MeshBasicMaterial({
+    color: P2_COLOR,
+    transparent: true,
+    opacity: 0.1,
+    side: THREE.DoubleSide,
+  });
+  const p2Glow = new THREE.Mesh(p2GlowGeo, p2GlowMat);
+  p2Glow.position.set(p2PaddleX + 0.3, 0, -0.2);
+  scene.add(p2Glow);
+
+  // ─── Ball (Green Contribution Square) ──────────────────────
+  const ballGeo = new THREE.BoxGeometry(BALL_SIZE, BALL_SIZE, BALL_DEPTH);
   const ballMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    roughness: 0.1,
-    metalness: 0.8,
-    emissive: 0xffffff,
-    emissiveIntensity: 0.6,
+    color: BALL_COLOR,
+    roughness: 0.3,
+    metalness: 0.2,
+    emissive: BALL_COLOR,
+    emissiveIntensity: 0.4,
   });
   const ball = new THREE.Mesh(ballGeo, ballMat);
   ball.castShadow = true;
   scene.add(ball);
 
   // Ball glow
-  const ballGlowGeo = new THREE.SphereGeometry(BALL_RADIUS * 2.5, 16, 16);
+  const ballGlowGeo = new THREE.BoxGeometry(BALL_SIZE * 2.5, BALL_SIZE * 2.5, BALL_DEPTH);
   const ballGlowMat = new THREE.MeshBasicMaterial({
-    color: 0xffffff,
+    color: BALL_COLOR,
     transparent: true,
-    opacity: 0.15,
+    opacity: 0.12,
   });
   const ballGlow = new THREE.Mesh(ballGlowGeo, ballGlowMat);
   ball.add(ballGlow);
 
   let ballVel = new THREE.Vector2(0, 0);
 
-  // Ball trail
-  const TRAIL_LENGTH = 12;
+  // Ball trail (green squares)
+  const TRAIL_LENGTH = 10;
   const trail = [];
   for (let i = 0; i < TRAIL_LENGTH; i++) {
-    const size = BALL_RADIUS * (1 - i / TRAIL_LENGTH) * 0.8;
-    const geo = new THREE.SphereGeometry(size, 8, 8);
+    const size = BALL_SIZE * (1 - i / TRAIL_LENGTH) * 0.6;
+    const geo = new THREE.BoxGeometry(size, size, BALL_DEPTH * 0.5);
+    const greenIdx = Math.min(i, GITHUB_GREENS.length - 1);
     const mat = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
+      color: GITHUB_GREENS[Math.min(Math.floor(i / 3), GITHUB_GREENS.length - 1)],
       transparent: true,
-      opacity: 0.3 * (1 - i / TRAIL_LENGTH),
+      opacity: 0.35 * (1 - i / TRAIL_LENGTH),
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.visible = false;
@@ -336,46 +307,48 @@
     trail.push({ mesh, x: 0, y: 0 });
   }
 
-  function resetBall() {
-    ball.position.set(paddle.position.x, PADDLE_Y + PADDLE_H / 2 + BALL_RADIUS + 0.1, 0);
-    const angle = (Math.random() * 0.6 + 0.2) * Math.PI; // 36°–144° upward
-    ballVel.set(Math.cos(angle) * ballSpeed, Math.sin(angle) * ballSpeed);
-  }
-
-  function resetBallOnPaddle() {
-    ball.position.set(paddle.position.x, PADDLE_Y + PADDLE_H / 2 + BALL_RADIUS + 0.05, 0);
+  function resetBallToCenter() {
+    ball.position.set(0, 0, 0);
     ballVel.set(0, 0);
+    trail.forEach(t => { t.x = 0; t.y = 0; t.mesh.visible = false; });
   }
 
-  resetBallOnPaddle();
+  function serveBall() {
+    ball.position.set(0, 0, 0);
+    const angle = (Math.random() - 0.5) * Math.PI * 0.5; // -45° to 45°
+    ballVel.set(
+      Math.cos(angle) * ballSpeed * serveDirection,
+      Math.sin(angle) * ballSpeed
+    );
+    rallyCount = 0;
+  }
+
+  resetBallToCenter();
 
   // ─── Particle System ───────────────────────────────────────
   const particles = [];
 
-  function spawnBlockExplosion(block) {
-    const baseColor = new THREE.Color(block.color.hex);
+  function spawnScoreExplosion(side) {
+    const baseX = side === 'left' ? -FIELD_W / 2 : FIELD_W / 2;
 
-    // Cube fragments
     for (let i = 0; i < PARTICLE_COUNT; i++) {
-      const size = 0.06 + Math.random() * 0.12;
+      const size = 0.08 + Math.random() * 0.15;
       const geo = new THREE.BoxGeometry(size, size, size);
-      const shade = baseColor.clone();
-      shade.offsetHSL(0, 0, (Math.random() - 0.5) * 0.3);
-
+      const colorIdx = Math.floor(Math.random() * GITHUB_GREENS.length);
       const mat = new THREE.MeshBasicMaterial({
-        color: shade,
+        color: GITHUB_GREENS[colorIdx],
         transparent: true,
         opacity: 1,
       });
 
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(
-        block.x + (Math.random() - 0.5) * BLOCK_SIZE * 0.8,
-        block.y + (Math.random() - 0.5) * BLOCK_SIZE * 0.8,
-        (Math.random() - 0.5) * BLOCK_DEPTH
+        baseX + (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * FIELD_H * 0.6,
+        (Math.random() - 0.5) * 1
       );
 
-      const speed = 2 + Math.random() * 6;
+      const speed = 3 + Math.random() * 7;
       const angle = Math.random() * Math.PI * 2;
       const elevAngle = (Math.random() - 0.3) * Math.PI;
 
@@ -389,7 +362,7 @@
       particles.push({
         mesh,
         vel: new THREE.Vector3(
-          Math.cos(angle) * Math.cos(elevAngle) * speed,
+          Math.cos(angle) * Math.cos(elevAngle) * speed * (side === 'left' ? 1 : -1),
           Math.sin(angle) * Math.cos(elevAngle) * speed,
           Math.sin(elevAngle) * speed
         ),
@@ -404,9 +377,8 @@
       });
     }
 
-    // Sparkle points
     for (let i = 0; i < SPARKLE_COUNT; i++) {
-      const size = 0.03 + Math.random() * 0.06;
+      const size = 0.04 + Math.random() * 0.08;
       const geo = new THREE.SphereGeometry(size, 6, 6);
       const mat = new THREE.MeshBasicMaterial({
         color: 0xffffff,
@@ -416,26 +388,59 @@
 
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(
-        block.x + (Math.random() - 0.5) * BLOCK_SIZE,
-        block.y + (Math.random() - 0.5) * BLOCK_SIZE,
+        baseX + (Math.random() - 0.5) * 1,
+        (Math.random() - 0.5) * FIELD_H * 0.4,
         Math.random() * 0.5
       );
 
-      const speed = 4 + Math.random() * 8;
+      const speed = 5 + Math.random() * 10;
       const angle = Math.random() * Math.PI * 2;
 
       scene.add(mesh);
       particles.push({
         mesh,
         vel: new THREE.Vector3(
-          Math.cos(angle) * speed,
+          Math.cos(angle) * speed * (side === 'left' ? 1 : -1) * 0.5,
           Math.sin(angle) * speed,
-          (Math.random() - 0.2) * speed * 0.5
+          (Math.random() - 0.2) * speed * 0.3
         ),
         rotVel: new THREE.Vector3(0, 0, 0),
         life: SPARKLE_LIFE * (0.5 + Math.random() * 0.5),
         maxLife: SPARKLE_LIFE,
         type: 'sparkle',
+      });
+    }
+  }
+
+  function spawnPaddleHit(px, py, color) {
+    for (let i = 0; i < 8; i++) {
+      const size = 0.04 + Math.random() * 0.08;
+      const geo = new THREE.BoxGeometry(size, size, size);
+      const mat = new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 1,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(px, py, 0);
+      const speed = 2 + Math.random() * 4;
+      const angle = Math.random() * Math.PI * 2;
+      scene.add(mesh);
+      particles.push({
+        mesh,
+        vel: new THREE.Vector3(
+          Math.cos(angle) * speed,
+          Math.sin(angle) * speed,
+          (Math.random() - 0.5) * speed * 0.3
+        ),
+        rotVel: new THREE.Vector3(
+          (Math.random() - 0.5) * 8,
+          (Math.random() - 0.5) * 8,
+          (Math.random() - 0.5) * 8
+        ),
+        life: 0.4,
+        maxLife: 0.4,
+        type: 'cube',
       });
     }
   }
@@ -453,92 +458,45 @@
         continue;
       }
 
-      const t = 1 - p.life / p.maxLife; // 0→1 over lifetime
-      const ease = t * t; // quadratic ease
+      const t = 1 - p.life / p.maxLife;
+      const ease = t * t;
 
-      // Move
       p.mesh.position.x += p.vel.x * dt;
       p.mesh.position.y += p.vel.y * dt;
       p.mesh.position.z += p.vel.z * dt;
 
-      // Gravity for cubes
       if (p.type === 'cube') {
-        p.vel.z -= 12 * dt;
+        p.vel.z -= 10 * dt;
         p.vel.x *= (1 - 2.0 * dt);
         p.vel.y *= (1 - 2.0 * dt);
       }
 
-      // Rotate cubes
       p.mesh.rotation.x += p.rotVel.x * dt;
       p.mesh.rotation.y += p.rotVel.y * dt;
       p.mesh.rotation.z += p.rotVel.z * dt;
 
-      // Fade and shrink
       p.mesh.material.opacity = 1 - ease;
       const s = 1 - ease * 0.7;
       p.mesh.scale.set(s, s, s);
 
-      // Sparkles: twinkle
       if (p.type === 'sparkle') {
         p.mesh.material.opacity *= 0.5 + Math.sin(p.life * 30) * 0.5;
       }
     }
   }
 
-  // ─── Collision Detection ────────────────────────────────────
-  function ballBlockCollision(bx, by, block) {
-    const halfW = BLOCK_SIZE / 2;
-    const halfH = BLOCK_SIZE / 2;
-
-    const closestX = Math.max(block.x - halfW, Math.min(bx, block.x + halfW));
-    const closestY = Math.max(block.y - halfH, Math.min(by, block.y + halfH));
-
-    const dx = bx - closestX;
-    const dy = by - closestY;
-
-    return (dx * dx + dy * dy) < (BALL_RADIUS * BALL_RADIUS);
-  }
-
-  function ballPaddleCollision(bx, by) {
-    const px = paddle.position.x;
-    const halfW = PADDLE_W / 2;
-    const halfH = PADDLE_H / 2;
-
-    return (
-      bx + BALL_RADIUS > px - halfW &&
-      bx - BALL_RADIUS < px + halfW &&
-      by - BALL_RADIUS < PADDLE_Y + halfH &&
-      by + BALL_RADIUS > PADDLE_Y - halfH
-    );
-  }
-
-  // ─── Score & Lives ─────────────────────────────────────────
-  function updateScoreDisplay() {
-    scoreSpan.textContent = score;
-  }
-
-  function updateLivesDisplay() {
-    livesDisplay.textContent = Array(lives).fill('❤️').join(' ');
-  }
-
-  // ─── Face Tracking (MediaPipe Vision Tasks) ─────────────────
-  let faceDetector = null;
-  let lastDetectTime = 0;
-
+  // ─── Face Tracking (MediaPipe FaceLandmarker) ──────────────
   async function initFaceTracking() {
     try {
-      // Use ideal constraints — Safari on iOS can reject exact width/height
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'user', width: { ideal: 320 }, height: { ideal: 240 } },
       });
       webcam.srcObject = stream;
-      // Safari requires load() before play() for getUserMedia streams
       webcam.load();
       await webcam.play();
 
-      webcamLabel.textContent = 'Loading model…';
+      webcamLabel.textContent = 'Loading model\u2026';
 
-      // Dynamically import MediaPipe Vision Tasks
       const vision = await import(
         'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs'
       );
@@ -547,71 +505,93 @@
         'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
       );
 
-      // Try GPU delegate first, fall back to CPU (needed for iOS Safari)
-      let detector;
+      let landmarker;
       try {
-        detector = await vision.FaceDetector.createFromOptions(filesetResolver, {
+        landmarker = await vision.FaceLandmarker.createFromOptions(filesetResolver, {
           baseOptions: {
             modelAssetPath:
-              'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',
+              'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
             delegate: 'GPU',
           },
           runningMode: 'VIDEO',
+          numFaces: 2,
+          outputFaceBlendshapes: true,
         });
       } catch (gpuErr) {
         console.warn('GPU delegate failed, falling back to CPU:', gpuErr);
-        detector = await vision.FaceDetector.createFromOptions(filesetResolver, {
+        landmarker = await vision.FaceLandmarker.createFromOptions(filesetResolver, {
           baseOptions: {
             modelAssetPath:
-              'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',
+              'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
           },
           runningMode: 'VIDEO',
+          numFaces: 2,
+          outputFaceBlendshapes: true,
         });
       }
-      faceDetector = detector;
+      faceLandmarker = landmarker;
 
       webcamLabel.textContent = 'Face tracking active';
       webcamLabel.classList.add('tracking');
       webcamContainer.classList.add('tracking');
       loadingEl.classList.add('hidden');
 
-      detectFace();
+      detectFaces();
     } catch (err) {
-      console.warn('Face tracking not available, falling back to mouse/touch:', err);
-      webcamLabel.textContent = 'Camera unavailable — use touch';
-      loadingEl.textContent = 'Using touch/mouse control';
-      useMouseFallback = true;
+      console.warn('Face tracking not available, falling back to keyboard:', err);
+      webcamLabel.textContent = 'Camera unavailable \u2014 use keyboard';
+      loadingEl.textContent = 'Using keyboard control';
+      modeIndicator.textContent = 'Keyboard: W/S + \u2191/\u2193';
+      useKeyboardFallback = true;
       setTimeout(() => loadingEl.classList.add('hidden'), 3000);
     }
   }
 
-  function detectFace() {
-    if (!faceDetector) return;
-    requestAnimationFrame(detectFace);
+  function detectFaces() {
+    if (!faceLandmarker) return;
+    requestAnimationFrame(detectFaces);
 
-    // Throttle to ~30 fps for face detection
     const now = performance.now();
     if (now - lastDetectTime < 33) return;
     lastDetectTime = now;
 
     try {
-      const result = faceDetector.detectForVideo(webcam, now);
+      const result = faceLandmarker.detectForVideo(webcam, now);
 
-      if (result.detections && result.detections.length > 0) {
-        const detection = result.detections[0];
-        faceDetected = true;
+      if (result.faceLandmarks && result.faceLandmarks.length > 0) {
+        const faces = result.faceLandmarks;
+        const blendshapes = result.faceBlendshapes || [];
+        numFacesDetected = faces.length;
 
-        // Use keypoints for precise tracking (nose tip = index 2)
-        if (detection.keypoints && detection.keypoints.length > 2) {
-          const nose = detection.keypoints[2];
-          // nose.x and nose.y are normalized 0–1; mirror and center to -1…1
-          rawFaceX = -(nose.x - 0.5) * 2;
-          rawFaceY = -(nose.y - 0.5) * 2;
+        // Sort faces by X position (in raw video coords)
+        // Higher X in raw = left in mirrored view = P1
+        const indexed = faces.map((lm, i) => ({
+          landmarks: lm,
+          blendshapes: blendshapes[i] || null,
+          centerX: lm[1].x, // nose bridge
+        }));
+        indexed.sort((a, b) => b.centerX - a.centerX); // descending X = P1 first
+
+        // Player 1 (left paddle)
+        const p1Face = indexed[0];
+        processEyebrows(p1Face, 1);
+
+        // Use first face for camera parallax
+        const nose = p1Face.landmarks[1];
+        rawFaceX = -(nose.x - 0.5) * 2;
+        rawFaceY = -(nose.y - 0.5) * 2;
+
+        // Player 2 (right paddle)
+        if (indexed.length >= 2) {
+          const p2Face = indexed[1];
+          processEyebrows(p2Face, 2);
+          modeIndicator.textContent = '2 Players';
+          modeIndicator.classList.add('two-player');
         } else {
-          // Fallback to bounding box center
-          const bb = detection.boundingBox;
-          rawFaceX = -((bb.originX + bb.width / 2) / webcam.videoWidth - 0.5) * 2;
-          rawFaceY = -((bb.originY + bb.height / 2) / webcam.videoHeight - 0.5) * 2;
+          // AI controls P2
+          p2EyebrowUp = false;
+          modeIndicator.textContent = '1 Player + AI';
+          modeIndicator.classList.remove('two-player');
         }
 
         if (!webcamContainer.classList.contains('tracking')) {
@@ -620,34 +600,342 @@
           webcamLabel.classList.add('tracking');
         }
       } else {
-        faceDetected = false;
+        numFacesDetected = 0;
+        p1EyebrowUp = false;
+        p2EyebrowUp = false;
         webcamContainer.classList.remove('tracking');
         webcamLabel.textContent = 'No face detected';
         webcamLabel.classList.remove('tracking');
+        modeIndicator.textContent = 'No face detected';
+        modeIndicator.classList.remove('two-player');
       }
     } catch (e) {
       // Silently continue on detection errors
     }
   }
 
-  // ─── Input ──────────────────────────────────────────────────
+  function processEyebrows(faceData, playerNum) {
+    const lm = faceData.landmarks;
+
+    // Try blendshapes first (more reliable)
+    if (faceData.blendshapes && faceData.blendshapes.categories) {
+      const cats = faceData.blendshapes.categories;
+      let browUp = 0;
+      let browCount = 0;
+      for (const cat of cats) {
+        if (cat.categoryName === 'browInnerUp' ||
+            cat.categoryName === 'browOuterUpLeft' ||
+            cat.categoryName === 'browOuterUpRight') {
+          browUp += cat.score;
+          browCount++;
+        }
+      }
+      if (browCount > 0) {
+        const avg = browUp / browCount;
+        if (playerNum === 1) {
+          p1EyebrowUp = avg > 0.3;
+        } else {
+          p2EyebrowUp = avg > 0.3;
+        }
+        return;
+      }
+    }
+
+    // Fallback: landmark-based detection
+    let browAvgY = 0;
+    const browLandmarks = [...LEFT_BROW, ...RIGHT_BROW];
+    for (const idx of browLandmarks) {
+      browAvgY += lm[idx].y;
+    }
+    browAvgY /= browLandmarks.length;
+
+    const eyeAvgY = (lm[LEFT_EYE_TOP].y + lm[RIGHT_EYE_TOP].y) / 2;
+    const faceHeight = lm[CHIN].y - lm[FOREHEAD].y;
+
+    if (faceHeight < 0.01) return;
+
+    const ratio = (eyeAvgY - browAvgY) / faceHeight;
+
+    if (playerNum === 1) {
+      p1EyebrowRatio = ratio;
+      if (p1CalibFrames < CALIBRATION_FRAMES) {
+        p1BaselineSum += ratio;
+        p1CalibFrames++;
+        p1Baseline = p1BaselineSum / p1CalibFrames;
+        p1EyebrowUp = false;
+      } else {
+        p1EyebrowUp = ratio > p1Baseline + EYEBROW_RAISE_THRESHOLD;
+        if (!p1EyebrowUp) {
+          p1Baseline += (ratio - p1Baseline) * EYEBROW_ADAPT_RATE;
+        }
+      }
+    } else {
+      p2EyebrowRatio = ratio;
+      if (p2CalibFrames < CALIBRATION_FRAMES) {
+        p2BaselineSum += ratio;
+        p2CalibFrames++;
+        p2Baseline = p2BaselineSum / p2CalibFrames;
+        p2EyebrowUp = false;
+      } else {
+        p2EyebrowUp = ratio > p2Baseline + EYEBROW_RAISE_THRESHOLD;
+        if (!p2EyebrowUp) {
+          p2Baseline += (ratio - p2Baseline) * EYEBROW_ADAPT_RATE;
+        }
+      }
+    }
+  }
+
+  // ─── Paddle Control ────────────────────────────────────────
+  function updatePaddles(dt) {
+    const minY = -FIELD_H / 2 + PADDLE_H / 2 + WALL_THICKNESS;
+    const maxY = FIELD_H / 2 - PADDLE_H / 2 - WALL_THICKNESS;
+
+    // Player 1 (left paddle)
+    if (useKeyboardFallback) {
+      // P1: W/S keys
+      if (keysDown['KeyW']) {
+        p1Paddle.position.y += PADDLE_SPEED * dt;
+      } else if (keysDown['KeyS']) {
+        p1Paddle.position.y -= PADDLE_SPEED * dt;
+      } else {
+        p1Paddle.position.y -= PADDLE_SPEED * 0.5 * dt;
+      }
+      // P2: Arrow keys
+      if (keysDown['ArrowUp']) {
+        p2Paddle.position.y += PADDLE_SPEED * dt;
+      } else if (keysDown['ArrowDown']) {
+        p2Paddle.position.y -= PADDLE_SPEED * dt;
+      } else {
+        p2Paddle.position.y -= PADDLE_SPEED * 0.5 * dt;
+      }
+    } else if (numFacesDetected >= 1) {
+      // Face-controlled P1
+      if (p1EyebrowUp) {
+        p1Paddle.position.y += PADDLE_SPEED * dt;
+      } else {
+        p1Paddle.position.y -= PADDLE_SPEED * 0.5 * dt;
+      }
+
+      if (numFacesDetected >= 2) {
+        // Face-controlled P2
+        if (p2EyebrowUp) {
+          p2Paddle.position.y += PADDLE_SPEED * dt;
+        } else {
+          p2Paddle.position.y -= PADDLE_SPEED * 0.5 * dt;
+        }
+      } else {
+        // AI for P2
+        aiUpdatePaddle(p2Paddle, dt);
+      }
+    } else {
+      // No faces — both drift down
+      p1Paddle.position.y -= PADDLE_SPEED * 0.3 * dt;
+      p2Paddle.position.y -= PADDLE_SPEED * 0.3 * dt;
+    }
+
+    // Clamp
+    p1Paddle.position.y = Math.max(minY, Math.min(maxY, p1Paddle.position.y));
+    p2Paddle.position.y = Math.max(minY, Math.min(maxY, p2Paddle.position.y));
+
+    // Update glow positions
+    p1Glow.position.y = p1Paddle.position.y;
+    p2Glow.position.y = p2Paddle.position.y;
+  }
+
+  function aiUpdatePaddle(paddle, dt) {
+    const targetY = ball.position.y;
+    const diff = targetY - paddle.position.y;
+
+    if (Math.abs(diff) > AI_DEAD_ZONE) {
+      const dir = Math.sign(diff);
+      paddle.position.y += dir * AI_SPEED * dt;
+    }
+  }
+
+  // ─── Collision Detection ───────────────────────────────────
+  function ballPaddleCollision(paddleMesh) {
+    const px = paddleMesh.position.x;
+    const py = paddleMesh.position.y;
+    const halfW = PADDLE_W / 2;
+    const halfH = PADDLE_H / 2;
+    const bx = ball.position.x;
+    const by = ball.position.y;
+    const halfBall = BALL_SIZE / 2;
+
+    return (
+      bx + halfBall > px - halfW &&
+      bx - halfBall < px + halfW &&
+      by + halfBall > py - halfH &&
+      by - halfBall < py + halfH
+    );
+  }
+
+  // ─── Physics Update ────────────────────────────────────────
+  function updatePhysics(dt) {
+    if (gameState !== 'PLAYING') return;
+
+    dt = Math.min(dt, 0.033);
+
+    const bx = ball.position.x + ballVel.x * dt;
+    const by = ball.position.y + ballVel.y * dt;
+
+    // Top/bottom wall collisions
+    const topBound = FIELD_H / 2 - BALL_SIZE / 2;
+    const bottomBound = -FIELD_H / 2 + BALL_SIZE / 2;
+
+    if (by > topBound) {
+      ball.position.y = topBound;
+      ballVel.y = -Math.abs(ballVel.y);
+    } else if (by < bottomBound) {
+      ball.position.y = bottomBound;
+      ballVel.y = Math.abs(ballVel.y);
+    } else {
+      ball.position.y = by;
+    }
+
+    ball.position.x = bx;
+
+    // P1 paddle collision (left paddle, ball moving left)
+    if (ballVel.x < 0 && ballPaddleCollision(p1Paddle)) {
+      ball.position.x = p1PaddleX + PADDLE_W / 2 + BALL_SIZE / 2;
+      const hitPos = (ball.position.y - p1Paddle.position.y) / (PADDLE_H / 2);
+      const maxAngle = Math.PI * 0.35;
+      const angle = hitPos * maxAngle;
+
+      rallyCount++;
+      ballSpeed = Math.min(BALL_SPEED_MAX, BALL_SPEED_INITIAL + rallyCount * BALL_SPEED_INCREMENT);
+
+      ballVel.x = Math.cos(angle) * ballSpeed;
+      ballVel.y = Math.sin(angle) * ballSpeed;
+
+      spawnPaddleHit(p1PaddleX + PADDLE_W / 2, ball.position.y, P1_COLOR);
+      screenShake = 0.08;
+    }
+
+    // P2 paddle collision (right paddle, ball moving right)
+    if (ballVel.x > 0 && ballPaddleCollision(p2Paddle)) {
+      ball.position.x = p2PaddleX - PADDLE_W / 2 - BALL_SIZE / 2;
+      const hitPos = (ball.position.y - p2Paddle.position.y) / (PADDLE_H / 2);
+      const maxAngle = Math.PI * 0.35;
+      const angle = hitPos * maxAngle;
+
+      rallyCount++;
+      ballSpeed = Math.min(BALL_SPEED_MAX, BALL_SPEED_INITIAL + rallyCount * BALL_SPEED_INCREMENT);
+
+      ballVel.x = -Math.cos(angle) * ballSpeed;
+      ballVel.y = Math.sin(angle) * ballSpeed;
+
+      spawnPaddleHit(p2PaddleX - PADDLE_W / 2, ball.position.y, P2_COLOR);
+      screenShake = 0.08;
+    }
+
+    // Scoring: ball exits left/right
+    if (ball.position.x < -FIELD_W / 2 - 2) {
+      playerScored(2);
+    } else if (ball.position.x > FIELD_W / 2 + 2) {
+      playerScored(1);
+    }
+  }
+
+  // ─── Score & Game State ────────────────────────────────────
+  function updateScoreDisplay() {
+    p1ScoreEl.textContent = p1Score;
+    p2ScoreEl.textContent = p2Score;
+  }
+
+  function flashScore(el) {
+    el.classList.remove('score-flash');
+    void el.offsetWidth; // force reflow
+    el.classList.add('score-flash');
+  }
+
+  function playerScored(player) {
+    if (player === 1) {
+      p1Score++;
+      flashScore(p1ScoreEl);
+      serveDirection = 1; // serve toward P2
+      spawnScoreExplosion('right');
+    } else {
+      p2Score++;
+      flashScore(p2ScoreEl);
+      serveDirection = -1; // serve toward P1
+      spawnScoreExplosion('left');
+    }
+
+    updateScoreDisplay();
+    screenShake = 0.4;
+
+    if (p1Score >= WIN_SCORE || p2Score >= WIN_SCORE) {
+      endGame(p1Score >= WIN_SCORE ? 1 : 2);
+    } else {
+      gameState = 'SCORED';
+      scorePauseTimer = SCORE_PAUSE;
+      resetBallToCenter();
+    }
+  }
+
+  function startGame() {
+    gameState = 'PLAYING';
+    p1Score = 0;
+    p2Score = 0;
+    ballSpeed = BALL_SPEED_INITIAL;
+    rallyCount = 0;
+    serveDirection = Math.random() < 0.5 ? 1 : -1;
+    updateScoreDisplay();
+    overlay.classList.add('hidden');
+    gameOverEl.classList.remove('visible');
+    p1Paddle.position.y = 0;
+    p2Paddle.position.y = 0;
+    resetBallToCenter();
+    setTimeout(() => {
+      if (gameState === 'PLAYING') serveBall();
+    }, 500);
+  }
+
+  function endGame(winner) {
+    gameState = 'GAME_OVER';
+    const isAI = numFacesDetected < 2 && !useKeyboardFallback;
+    let winnerLabel;
+    if (isAI) {
+      winnerLabel = winner === 1 ? 'You Win! \uD83C\uDF89' : 'AI Wins!';
+    } else {
+      winnerLabel = 'Player ' + winner + ' Wins! \uD83C\uDF89';
+    }
+    gameOverTitle.textContent = winnerLabel;
+    gameOverTitle.className = winner === 1 ? 'p1-win' : 'p2-win';
+    finalScoreEl.textContent = p1Score + ' \u2014 ' + p2Score;
+    gameOverEl.classList.add('visible');
+  }
+
+  function resetGame() {
+    particles.forEach(p => {
+      scene.remove(p.mesh);
+      p.mesh.geometry.dispose();
+      p.mesh.material.dispose();
+    });
+    particles.length = 0;
+    startGame();
+  }
+
+  // ─── Input ─────────────────────────────────────────────────
   document.addEventListener('keydown', (e) => {
+    keysDown[e.code] = true;
     if (e.code === 'Space') {
       e.preventDefault();
-      if (gameState === 'WAITING') {
-        startGame();
-      } else if (gameState === 'GAME_OVER' || gameState === 'WIN') {
-        resetGame();
-      }
+      if (gameState === 'WAITING') startGame();
+      else if (gameState === 'GAME_OVER') resetGame();
     }
   });
 
-  // Tap / click to start or restart (mobile-friendly)
+  document.addEventListener('keyup', (e) => {
+    keysDown[e.code] = false;
+  });
+
   function handleTapStart(e) {
     if (gameState === 'WAITING') {
       e.preventDefault();
       startGame();
-    } else if (gameState === 'GAME_OVER' || gameState === 'WIN') {
+    } else if (gameState === 'GAME_OVER') {
       e.preventDefault();
       resetGame();
     }
@@ -659,177 +947,13 @@
   overlay.addEventListener('click', handleTapStart);
   gameOverEl.addEventListener('click', handleTapStart);
 
-  // Track touch position for paddle control on mobile
-  document.addEventListener('touchmove', (e) => {
-    if (e.touches.length > 0) {
-      mouseX = (e.touches[0].clientX / window.innerWidth - 0.5) * 2;
-      useMouseFallback = true;
-    }
-  }, { passive: true });
-
-  document.addEventListener('mousemove', (e) => {
-    mouseX = (e.clientX / window.innerWidth - 0.5) * 2; // -1…1
-  });
-
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
-  // ─── Game State Management ─────────────────────────────────
-  function startGame() {
-    gameState = 'PLAYING';
-    score = 0;
-    lives = MAX_LIVES;
-    ballSpeed = BALL_SPEED_INITIAL;
-    updateScoreDisplay();
-    updateLivesDisplay();
-    overlay.classList.add('hidden');
-    gameOverEl.classList.remove('visible');
-    resetBall();
-  }
-
-  function loseLife() {
-    lives--;
-    updateLivesDisplay();
-    screenShake = 0.5;
-
-    if (lives <= 0) {
-      endGame(false);
-    } else {
-      resetBallOnPaddle();
-      // Brief pause then re-launch
-      setTimeout(() => {
-        if (gameState === 'PLAYING') resetBall();
-      }, 800);
-    }
-  }
-
-  function endGame(won) {
-    gameState = won ? 'WIN' : 'GAME_OVER';
-    gameOverTitle.textContent = won ? '🎉 You Win!' : 'Game Over';
-    gameOverTitle.className = won ? 'win' : '';
-    finalScoreSpan.textContent = score;
-    gameOverEl.classList.add('visible');
-  }
-
-  function resetGame() {
-    // Clear particles
-    particles.forEach(p => {
-      scene.remove(p.mesh);
-      p.mesh.geometry.dispose();
-      p.mesh.material.dispose();
-    });
-    particles.length = 0;
-
-    buildBlocks();
-    buildUICommitGraph();
-    startGame();
-  }
-
-  // ─── Physics Update ─────────────────────────────────────────
-  function updatePhysics(dt) {
-    if (gameState !== 'PLAYING') return;
-
-    // Cap dt to avoid tunneling on tab switch
-    dt = Math.min(dt, 0.033);
-
-    const bx = ball.position.x + ballVel.x * dt;
-    const by = ball.position.y + ballVel.y * dt;
-
-    // Wall collisions
-    const leftBound = -FIELD_W / 2 + BALL_RADIUS;
-    const rightBound = FIELD_W / 2 - BALL_RADIUS;
-    const topBound = FIELD_H / 2 - BALL_RADIUS;
-
-    if (bx < leftBound) {
-      ball.position.x = leftBound;
-      ballVel.x = Math.abs(ballVel.x);
-    } else if (bx > rightBound) {
-      ball.position.x = rightBound;
-      ballVel.x = -Math.abs(ballVel.x);
-    } else {
-      ball.position.x = bx;
-    }
-
-    if (by > topBound) {
-      ball.position.y = topBound;
-      ballVel.y = -Math.abs(ballVel.y);
-    } else {
-      ball.position.y = by;
-    }
-
-    // Paddle collision
-    if (ballVel.y < 0 && ballPaddleCollision(ball.position.x, ball.position.y)) {
-      ball.position.y = PADDLE_Y + PADDLE_H / 2 + BALL_RADIUS;
-      
-      // Angle based on hit position (-1 to 1)
-      const hitPos = (ball.position.x - paddle.position.x) / (PADDLE_W / 2);
-      const maxAngle = Math.PI * 0.38;
-      const angle = Math.PI / 2 + hitPos * maxAngle;
-
-      ballVel.x = -Math.cos(angle) * ballSpeed;
-      ballVel.y = Math.sin(angle) * ballSpeed;
-
-      screenShake = 0.08;
-    }
-
-    // Block collisions
-    for (let i = 0; i < blocks.length; i++) {
-      const block = blocks[i];
-      if (!block.alive) continue;
-
-      if (ballBlockCollision(ball.position.x, ball.position.y, block)) {
-        // Destroy block
-        block.alive = false;
-        scene.remove(block.mesh);
-        blocksAlive--;
-
-        // Score
-        score += block.color.points;
-        updateScoreDisplay();
-
-        // Speed up slightly
-        ballSpeed = Math.min(BALL_SPEED_MAX, ballSpeed + BALL_SPEED_INCREMENT);
-
-        // Determine bounce direction
-        const dx = ball.position.x - block.x;
-        const dy = ball.position.y - block.y;
-
-        if (Math.abs(dx) / (BLOCK_SIZE / 2) > Math.abs(dy) / (BLOCK_SIZE / 2)) {
-          ballVel.x = Math.sign(dx) * Math.abs(ballVel.x);
-        } else {
-          ballVel.y = Math.sign(dy) * Math.abs(ballVel.y);
-        }
-
-        // Normalize velocity to current speed
-        const currentSpeed = Math.sqrt(ballVel.x * ballVel.x + ballVel.y * ballVel.y);
-        if (currentSpeed > 0) {
-          ballVel.x = (ballVel.x / currentSpeed) * ballSpeed;
-          ballVel.y = (ballVel.y / currentSpeed) * ballSpeed;
-        }
-
-        // Explosion particles!
-        spawnBlockExplosion(block);
-        screenShake = 0.15;
-
-        // Win check
-        if (blocksAlive <= 0) {
-          endGame(true);
-        }
-
-        break; // One block per frame
-      }
-    }
-
-    // Ball out of bounds (bottom)
-    if (ball.position.y < -FIELD_H / 2 - 2) {
-      loseLife();
-    }
-  }
-
-  // ─── Update Loop ────────────────────────────────────────────
+  // ─── Update Loop ───────────────────────────────────────────
   const clock = new THREE.Clock();
 
   function update() {
@@ -837,28 +961,24 @@
 
     const dt = clock.getDelta();
 
-    // Smooth face tracking input
-    const targetX = (faceDetected && !useMouseFallback) ? rawFaceX : mouseX;
-    const targetY = faceDetected ? rawFaceY : 0;
-
+    // Smooth face tracking for parallax
+    const targetX = numFacesDetected > 0 ? rawFaceX : 0;
+    const targetY = numFacesDetected > 0 ? rawFaceY : 0;
     smoothFaceX += (targetX - smoothFaceX) * FACE_SMOOTH;
     smoothFaceY += (targetY - smoothFaceY) * FACE_SMOOTH;
 
-    // Update paddle position
-    // Remap so the middle third of the webcam covers the full paddle range
-    if (gameState === 'PLAYING' || gameState === 'WAITING') {
-      const amplified = Math.max(-1, Math.min(1, smoothFaceX * 3));
-      const paddleTarget = amplified * (FIELD_W / 2 - PADDLE_W / 2);
-      paddle.position.x += (paddleTarget - paddle.position.x) * 0.15;
-      paddle.position.x = Math.max(-FIELD_W / 2 + PADDLE_W / 2, Math.min(FIELD_W / 2 - PADDLE_W / 2, paddle.position.x));
-
-      paddleGlow.position.x = paddle.position.x;
+    // Update paddles
+    if (gameState === 'PLAYING' || gameState === 'SCORED' || gameState === 'WAITING') {
+      updatePaddles(dt);
     }
 
-    // Ball follows paddle when stationary (waiting or between lives)
-    if (gameState === 'WAITING' || (gameState === 'PLAYING' && ballVel.x === 0 && ballVel.y === 0)) {
-      ball.position.x = paddle.position.x;
-      ball.position.y = PADDLE_Y + PADDLE_H / 2 + BALL_RADIUS + 0.05;
+    // Score pause → re-serve
+    if (gameState === 'SCORED') {
+      scorePauseTimer -= dt;
+      if (scorePauseTimer <= 0) {
+        gameState = 'PLAYING';
+        serveBall();
+      }
     }
 
     // Physics
@@ -867,34 +987,37 @@
     // Particles
     updateParticles(dt);
 
-    // Camera parallax
+    // Camera parallax + shake
     const shakeX = screenShake > 0 ? (Math.random() - 0.5) * screenShake : 0;
     const shakeY = screenShake > 0 ? (Math.random() - 0.5) * screenShake : 0;
     screenShake *= 0.9;
     if (screenShake < 0.001) screenShake = 0;
 
     camera.position.set(
-      CAM_BASE.x + smoothFaceX * PARALLAX_STRENGTH_X + shakeX,
-      CAM_BASE.y + smoothFaceY * PARALLAX_STRENGTH_Y + shakeY,
+      CAM_BASE.x + smoothFaceX * PARALLAX_X + shakeX,
+      CAM_BASE.y + smoothFaceY * PARALLAX_Y + shakeY,
       CAM_BASE.z
     );
     camera.lookAt(
-      CAM_LOOKAT_BASE.x + smoothFaceX * PARALLAX_STRENGTH_X * 0.15,
-      CAM_LOOKAT_BASE.y + smoothFaceY * PARALLAX_STRENGTH_Y * 0.15,
-      CAM_LOOKAT_BASE.z
+      CAM_LOOKAT.x + smoothFaceX * PARALLAX_X * 0.15,
+      CAM_LOOKAT.y + smoothFaceY * PARALLAX_Y * 0.15,
+      CAM_LOOKAT.z
     );
 
     // Paddle glow pulse
-    paddleGlowMat.opacity = 0.1 + Math.sin(clock.elapsedTime * 3) * 0.04;
+    const t = clock.elapsedTime;
+    p1GlowMat.opacity = 0.08 + Math.sin(t * 3) * 0.04;
+    p2GlowMat.opacity = 0.08 + Math.sin(t * 3 + 1) * 0.04;
 
     // Ball glow pulse
-    ballGlowMat.opacity = 0.12 + Math.sin(clock.elapsedTime * 5) * 0.05;
+    ballGlowMat.opacity = 0.1 + Math.sin(t * 5) * 0.05;
 
-    // Ball rotation (visual only)
-    ball.rotation.x += ballVel.y * dt * 0.5;
-    ball.rotation.y += ballVel.x * dt * 0.5;
+    // Ball rotation (visual spin based on velocity)
+    ball.rotation.x += ballVel.y * dt * 0.3;
+    ball.rotation.y += ballVel.x * dt * 0.3;
+    ball.rotation.z += (ballVel.x + ballVel.y) * dt * 0.1;
 
-    // Ball trail update
+    // Ball trail
     const isMoving = ballVel.x !== 0 || ballVel.y !== 0;
     for (let i = TRAIL_LENGTH - 1; i > 0; i--) {
       trail[i].x = trail[i - 1].x;
@@ -911,9 +1034,8 @@
     renderer.render(scene, camera);
   }
 
-  // ─── Init ───────────────────────────────────────────────────
+  // ─── Init ──────────────────────────────────────────────────
   updateScoreDisplay();
-  updateLivesDisplay();
   initFaceTracking();
   update();
 
